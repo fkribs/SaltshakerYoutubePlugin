@@ -85,7 +85,8 @@ const YouTubePlugin = {
 
     const onWindowClosed = () => {
       emitDisconnectIfConnected("window-closed");
-    };
+      api.stop();
+  };
 
     await api.host.browser.subscribe({ events: ["Navigated", "WindowClosed"] });
 

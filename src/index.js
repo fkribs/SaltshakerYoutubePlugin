@@ -1,139 +1,169 @@
 const YouTubePlugin = {
-  async onInit(api) {
-    api.log("[YouTubePlugin] Initializing...");
+    async onInit(api) {
+      api.log("[YouTubePlugin] Initializing...");
 
-    let uid = null;
-    let currentRoomCode = null;
-    let disposing = false;
-    let disconnectOnLeave = true;
+      let uid = null;
+      let currentRoomCode = null;
+      let disposing = false;
+      let disconnectOnLeave = true;
+      let _titleDebounce = null;
 
-    try {
-      if (api.settings?.get) {
-        disconnectOnLeave = (await api.settings.get("disconnectOnLeave", true)) === true;
-        uid = (await api.settings.get("youtubeUserId", null)) || null;
-      }
-    } catch (e) {
-      api.log("[YouTubePlugin] Failed to read settings (non-fatal):", e);
-    }
-
-    if (!uid) {
-      api.log("[YouTubePlugin] No youtubeUserId configured; using 'viewer' as uid.");
-      uid = "viewer";
-    }
-
-    let disposeSetting = null;
-    try {
-      if (api.settings?.onChange) {
-        disposeSetting = api.settings.onChange(({ key, value }) => {
-          if (key === "disconnectOnLeave") {
-            disconnectOnLeave = value === true;
-            api.log(`[YouTubePlugin] disconnectOnLeave=${disconnectOnLeave}`);
-          }
-          if (key === "youtubeUserId" && value) {
-            uid = value;
-            api.log("[YouTubePlugin] youtubeUserId updated");
-          }
-        });
-      }
-    } catch (e) {
-      api.log("[YouTubePlugin] Failed to subscribe to settings changes (non-fatal):", e);
-    }
-
-    function getVideoId(url) {
       try {
-        const u = new URL(url);
-        if (
-          (u.hostname === "www.youtube.com" || u.hostname === "youtube.com") &&
-          u.pathname === "/watch"
-        ) {
-          return u.searchParams.get("v") || null;
+        if (api.settings?.get) {
+          disconnectOnLeave = (await api.settings.get("disconnectOnLeave", true)) === true;
+          uid = (await api.settings.get("youtubeUserId", null)) || null;
         }
-      } catch (_) {}
-      return null;
-    }
-
-    function emitDisconnectIfConnected(reason) {
-      if (disposing) return;
-      if (!currentRoomCode) return;
-      const roomCode = currentRoomCode;
-      currentRoomCode = null;
-      api.log(`[YouTubePlugin] disconnect(${roomCode}, ${uid}) reason=${reason}`);
-      api.sendEvent("disconnect", roomCode, uid);
-    }
-
-    const onNavigated = ({ url }) => {
-      if (disposing) return;
-      const videoId = getVideoId(url);
-
-      if (videoId) {
-        if (currentRoomCode === videoId) return;
-        if (currentRoomCode) {
-          api.log(`[YouTubePlugin] Switching videos: disconnecting ${currentRoomCode} before connecting ${videoId}`);
-          api.sendEvent("disconnect", currentRoomCode, uid);
-        }
-        currentRoomCode = videoId;
-        api.log(`[YouTubePlugin] connect(${videoId}, ${uid})`);
-        api.sendEvent("connect", videoId, uid);
-      } else if (currentRoomCode) {
-        if (!disconnectOnLeave) {
-          api.log("[YouTubePlugin] Left video page; disconnectOnLeave=false, staying connected.");
-          return;
-        }
-        emitDisconnectIfConnected("navigated-away");
+      } catch (e) {
+        api.log("[YouTubePlugin] Failed to read settings (non-fatal):", e);
       }
-    };
 
-    const onWindowClosed = () => {
-      emitDisconnectIfConnected("window-closed");
-      api.stop();
-  };
+      if (!uid) {
+        api.log("[YouTubePlugin] No youtubeUserId configured; using 'viewer' as uid.");
+        uid = "viewer";
+      }
 
-    await api.host.browser.subscribe({ events: ["Navigated", "WindowClosed"] });
+      let disposeSetting = null;
+      try {
+        if (api.settings?.onChange) {
+          disposeSetting = api.settings.onChange(({ key, value }) => {
+            if (key === "disconnectOnLeave") {
+              disconnectOnLeave = value === true;
+              api.log(`[YouTubePlugin] disconnectOnLeave=${disconnectOnLeave}`);
+            }
+            if (key === "youtubeUserId" && value) {
+              uid = value;
+              api.log("[YouTubePlugin] youtubeUserId updated");
+            }
+          });
+        }
+      } catch (e) {
+        api.log("[YouTubePlugin] Failed to subscribe to settings changes (non-fatal):", e);
+      }
 
-    const disposeNavigated = api.on("browser:Navigated", onNavigated);
-    const disposeWindowClosed = api.on("browser:WindowClosed", onWindowClosed);
+      function getVideoId(url) {
+        try {
+          const u = new URL(url);
+          if (
+            (u.hostname === "www.youtube.com" || u.hostname === "youtube.com") &&
+            u.pathname === "/watch"
+          ) {
+            return u.searchParams.get("v") || null;
+          }
+        } catch (_) {}
+        return null;
+      }
 
-    await api.host.browser.openWindow({ url: "https://www.youtube.com", title: "YouTube – Saltshaker" });
-    api.log("[YouTubePlugin] YouTube window opened.");
+      function cleanTitle(raw) {
+        return (raw || "")
+          .replace(/\s*[-–—]\s*YouTube\s*$/i, "")
+          .trim();
+      }
 
-    this.onDispose = async () => {
-      if (disposing) return;
-      disposing = true;
-
-      if (currentRoomCode) {
+      function emitDisconnectIfConnected(reason) {
+        if (disposing) return;
+        if (!currentRoomCode) return;
         const roomCode = currentRoomCode;
         currentRoomCode = null;
-        api.log(`[YouTubePlugin] Disposing: disconnect(${roomCode}, ${uid})`);
+        api.log(`[YouTubePlugin] disconnect(${roomCode}) reason=${reason}`);
         api.sendEvent("disconnect", roomCode, uid);
       }
 
-      try { disposeNavigated(); } catch (e) { api.log("[YouTubePlugin] disposeNavigated error", e); }
-      try { disposeWindowClosed(); } catch (e) { api.log("[YouTubePlugin] disposeWindowClosed error", e); }
-      try { disposeSetting?.(); } catch (e) { api.log("[YouTubePlugin] disposeSetting error", e); }
+      const onNavigated = ({ url }) => {
+        if (disposing) return;
+        const videoId = getVideoId(url);
 
-      if (api.host?.browser?.unsubscribe) {
-        try {
-          await api.host.browser.unsubscribe({ events: ["Navigated", "WindowClosed"] });
-        } catch (e) {
-          api.log("[YouTubePlugin] browser.unsubscribe failed (non-fatal):", e);
+        if (videoId) {
+          if (currentRoomCode === videoId) return;
+          if (currentRoomCode) {
+            api.log(`[YouTubePlugin] Switching videos: disconnecting ${currentRoomCode} before connecting ${videoId}`);
+            api.sendEvent("disconnect", currentRoomCode, uid);
+          }
+          currentRoomCode = videoId;
+          api.log(`[YouTubePlugin] connect(${videoId}, ${uid})`);
+          // No title yet — TitleChanged will follow and update the label
+          api.sendEvent("connect", videoId, uid, null);
+        } else if (currentRoomCode) {
+          if (!disconnectOnLeave) {
+            api.log("[YouTubePlugin] Left video page; disconnectOnLeave=false, staying connected.");
+            return;
+          }
+          emitDisconnectIfConnected("navigated-away");
         }
-      }
+      };
 
-      if (api.host?.browser?.closeWindow) {
-        try {
-          api.host.browser.closeWindow();
-        } catch (e) {
-          api.log("[YouTubePlugin] closeWindow failed (non-fatal):", e);
+      const onTitleChanged = ({ title, url }) => {
+        if (disposing) return;
+        const videoId = getVideoId(url);
+        if (!videoId || videoId !== currentRoomCode) return;
+
+        const label = cleanTitle(title);
+        if (!label) return;
+
+        // Debounce: YouTube sets the title multiple times during load
+        clearTimeout(_titleDebounce);
+        _titleDebounce = setTimeout(() => {
+          if (disposing || videoId !== currentRoomCode) return;
+          api.log(`[YouTubePlugin] title updated: "${label}"`);
+          // Same roomCode → connectionHub treats this as a label-only update
+          api.sendEvent("connect", videoId, uid, label);
+        }, 500);
+      };
+
+      const onWindowClosed = () => {
+        emitDisconnectIfConnected("window-closed");
+        api.stop();
+      };
+
+      await api.host.browser.subscribe({ events: ["Navigated", "TitleChanged", "WindowClosed"] });
+
+      const disposeNavigated = api.on("browser:Navigated", onNavigated);
+      const disposeTitleChanged = api.on("browser:TitleChanged", onTitleChanged);
+      const disposeWindowClosed = api.on("browser:WindowClosed", onWindowClosed);
+
+      await api.host.browser.openWindow({ url: "https://www.youtube.com", title: "YouTube – Saltshaker" });
+      api.log("[YouTubePlugin] YouTube window opened.");
+
+      this.onDispose = async () => {
+        if (disposing) return;
+        disposing = true;
+
+        clearTimeout(_titleDebounce);
+
+        if (currentRoomCode) {
+          const roomCode = currentRoomCode;
+          currentRoomCode = null;
+          api.log(`[YouTubePlugin] Disposing: disconnect(${roomCode}, ${uid})`);
+          api.sendEvent("disconnect", roomCode, uid);
         }
-      }
 
-      api.log("[YouTubePlugin] Disposed.");
-    };
-  },
+        try { disposeNavigated(); } catch (e) { api.log("[YouTubePlugin] disposeNavigated error", e); }
+        try { disposeTitleChanged(); } catch (e) { api.log("[YouTubePlugin] disposeTitleChanged error", e); }
+        try { disposeWindowClosed(); } catch (e) { api.log("[YouTubePlugin] disposeWindowClosed error", e); }
+        try { disposeSetting?.(); } catch (e) { api.log("[YouTubePlugin] disposeSetting error", e); }
 
-  async onDispose() {
-    if (typeof this.onDispose === "function") return this.onDispose();
-  }
-};
+        if (api.host?.browser?.unsubscribe) {
+          try {
+            await api.host.browser.unsubscribe({ events: ["Navigated", "TitleChanged", "WindowClosed"] });
+          } catch (e) {
+            api.log("[YouTubePlugin] browser.unsubscribe failed (non-fatal):", e);
+          }
+        }
 
-module.exports = YouTubePlugin;
+        if (api.host?.browser?.closeWindow) {
+          try {
+            api.host.browser.closeWindow();
+          } catch (e) {
+            api.log("[YouTubePlugin] closeWindow failed (non-fatal):", e);
+          }
+        }
+
+        api.log("[YouTubePlugin] Disposed.");
+      };
+    },
+
+    async onDispose() {
+      if (typeof this.onDispose === "function") return this.onDispose();
+    }
+  };
+
+  module.exports = YouTubePlugin;

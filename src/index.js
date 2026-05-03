@@ -17,11 +17,6 @@ const YouTubePlugin = {
         api.log("[YouTubePlugin] Failed to read settings (non-fatal):", e);
       }
 
-      if (!uid) {
-        api.log("[YouTubePlugin] No youtubeUserId configured; using 'viewer' as uid.");
-        uid = "viewer";
-      }
-
       let disposeSetting = null;
       try {
         if (api.settings?.onChange) {
@@ -65,7 +60,7 @@ const YouTubePlugin = {
         const roomCode = currentRoomCode;
         currentRoomCode = null;
         api.log(`[YouTubePlugin] disconnect(${roomCode}) reason=${reason}`);
-        api.sendEvent("disconnect", roomCode, uid);
+        api.sendEvent("disconnect", roomCode, null);
       }
 
       const onNavigated = ({ url }) => {
@@ -76,12 +71,11 @@ const YouTubePlugin = {
           if (currentRoomCode === videoId) return;
           if (currentRoomCode) {
             api.log(`[YouTubePlugin] Switching videos: disconnecting ${currentRoomCode} before connecting ${videoId}`);
-            api.sendEvent("disconnect", currentRoomCode, uid);
+            api.sendEvent("disconnect", currentRoomCode, null);
           }
           currentRoomCode = videoId;
-          api.log(`[YouTubePlugin] connect(${videoId}, ${uid})`);
           // No title yet — TitleChanged will follow and update the label
-          api.sendEvent("connect", videoId, uid, null);
+          api.sendEvent("connect", videoId, null, null);
         } else if (currentRoomCode) {
           if (!disconnectOnLeave) {
             api.log("[YouTubePlugin] Left video page; disconnectOnLeave=false, staying connected.");
@@ -105,7 +99,7 @@ const YouTubePlugin = {
           if (disposing || videoId !== currentRoomCode) return;
           api.log(`[YouTubePlugin] title updated: "${label}"`);
           // Same roomCode → connectionHub treats this as a label-only update
-          api.sendEvent("connect", videoId, uid, label);
+          api.sendEvent("connect", videoId, null, label);
         }, 500);
       };
 
@@ -132,8 +126,8 @@ const YouTubePlugin = {
         if (currentRoomCode) {
           const roomCode = currentRoomCode;
           currentRoomCode = null;
-          api.log(`[YouTubePlugin] Disposing: disconnect(${roomCode}, ${uid})`);
-          api.sendEvent("disconnect", roomCode, uid);
+          api.log(`[YouTubePlugin] Disposing: disconnect(${roomCode})`);
+          api.sendEvent("disconnect", roomCode, null);
         }
 
         try { disposeNavigated(); } catch (e) { api.log("[YouTubePlugin] disposeNavigated error", e); }
